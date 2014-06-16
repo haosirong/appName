@@ -238,12 +238,21 @@ struct ResLabel{
 struct ResTable{
   int typeIndex;
   int labelIndex;
+  int packageIndex;
+  int versionNameIndex;
   int indexName;
   int isutf16;
   int mainActivity;
+
 //  struct ResLabel* resLabel;
-//  uint32_t app_lblID;
-//  uint32_t activity_lblID;
+
+  uint32_t app_lblID;
+  uint32_t activity_lblID;
+  unsigned char* app_lbl;
+  unsigned char* activity_lbl;
+  unsigned char* package;
+  unsigned char* versionName;
+
   const uint8_t* dataEnd;
   uint32_t* mapPool;
   uint32_t* valPool_OffsetArray;
@@ -317,6 +326,39 @@ void dispChunkInfo(const struct ResChunk_header* chunk){
   printf("type is %x,headersize is %x,size is %x\n",chunk->type,chunk->headerSize,chunk->size);
 }
 
+void checkManifestTag(struct ResTable* resTable,const struct ResXMLTree_node* manifestNode){
+  struct ResXMLTree_attrExt* attrExt=(struct ResXMLTree_attrExt*)((uint8_t*)manifestNode+manifestNode->header.headerSize);
+  int attrCount=attrExt->attributeCount;
+  struct ResXMLTree_attribute* attrChunk=(struct ResXMLTree_attribute*)((uint8_t*)attrExt+attrExt->attributeStart);
+  int i;
+  for(i=0;i<attrCount;i++){
+    if(attrChunk->rawValue != -1){
+          unsigned char* label_name=(unsigned char*)malloc(sizeof(unsigned char)*256);
+          unsigned char* label_str=(unsigned char*)(resTable->resPool_OffsetArray[attrChunk->rawValue]);
+          int labelLen=label_str[0];
+          unsigned short* label_name16=(unsigned short*)(label_str+2);
+//          printf("label len  is ---> %d\n",labelLen);
+          UTF16ToUTF8(label_name16,label_name16+labelLen,label_name,label_name+256);
+//          printf("HAHAHA1 label name is ---> %s\n",label_name);
+          free(label_name);
+       if(attrChunk->name == resTable->versionNameIndex){
+          printf("attr len  is ---> %d\n",labelLen);
+          printf("HAHAHA1 version name is ---> %s\n",label_name);
+          resTable->versionName=(unsigned char*)malloc(sizeof(unsigned char)*256);
+          memcpy(resTable->versionName,label_name,256) ;
+       }
+       if(attrChunk->name == resTable->packageIndex){ 
+          printf("attr len  is ---> %d\n",labelLen);
+          printf("HAHAHA1  package name is ---> %s\n",label_name);
+          resTable->package=(unsigned char*)malloc(sizeof(unsigned char)*256);
+          memcpy(resTable->package,label_name,256) ;
+       }
+    } 
+    attrChunk=(struct ResXMLTree_attribute*)((uint8_t*)attrChunk+20);
+  }
+}
+
+
 int checkApplicationTag(struct ResTable* resTable,struct ResXMLTree_node* xmlNode){
   struct ResXMLTree_attrExt* attrExt=(struct ResXMLTree_attrExt*)((uint8_t*)xmlNode+xmlNode->header.headerSize);
   int tagIndex=attrExt->name;
@@ -346,11 +388,14 @@ int checkApplicationTag(struct ResTable* resTable,struct ResXMLTree_node* xmlNod
           printf("label len  is ---> %d\n",labelLen);
           UTF16ToUTF8(label_name16,label_name16+labelLen,label_name,label_name+256);
           printf("HAHAHA1 label name is ---> %s\n",label_name);
+          resTable->app_lbl=(unsigned char*)malloc(sizeof(unsigned char)*256);
+          memcpy(resTable->app_lbl,label_name,256) ;
           free(label_name);
         }
         else{// label name is string reference
           struct Res_value* res_val=&attrChunk->typedValue;
           printf("HAHAHA resouce id is %x\n",res_val->data);
+          resTable->app_lblID=res_val->data;
         }
       }
       attrChunk=(struct ResXMLTree_attribute*)((uint8_t*)attrChunk+20);
@@ -374,11 +419,14 @@ int checkApplicationTag(struct ResTable* resTable,struct ResXMLTree_node* xmlNod
             printf("label len  is ---> %d\n",tagLen);
             UTF16ToUTF8(label_name16,label_name16+labelLen,label_name,label_name+256);
             printf("HAHAHA1 label name is ---> %s\n",label_name);
+            resTable->activity_lbl=(unsigned char*)malloc(sizeof(unsigned char)*256);
+            memcpy(resTable->activity_lbl,label_name,256) ;
             free(label_name);
           }  
           else{// label name is string reference
             struct Res_value* res_val=&attrChunk->typedValue;
             printf("HAHAHA resouce id is %x\n",res_val->data);
+            resTable->activity_lblID=res_val->data;
           }
         }
       }
@@ -535,7 +583,7 @@ void dispResPool(const struct ResStringPool_header* resPool){
   free(strval);
 }
 
-void setLableIndex(struct ResTable* resTable,const struct ResStringPool_header* resPool){
+void setNecessaryIndex(struct ResTable* resTable,const struct ResStringPool_header* resPool){
   int i,offset;
   int utf16=1;
   int stringCount=resPool->stringCount;
@@ -553,14 +601,30 @@ void setLableIndex(struct ResTable* resTable,const struct ResStringPool_header* 
     str+=offset;
     if(strcmp(strval,"label") == 0)
       resTable->labelIndex=i;
+    if(strcmp(strval,"versionName") == 0)
+      resTable->versionNameIndex=i;
+    if(strcmp(strval,"package") == 0)
+      resTable->packageIndex=i;
   }
   free(strval);
   if(resTable->indexName == -1){
     fprintf(stderr,"can not find label attr\n");
     exit(-1);
   }
-  printf("INDEX OF LABEL IS %d\n",resTable->labelIndex);
+  printf("INDEX OF NECESSARY ATTR IS label:%d versionName:%d package:%d\n",resTable->labelIndex,resTable->versionNameIndex,resTable->packageIndex);
 }
+
+void Init_ResTable(struct ResTable* resTable){
+  resTable->app_lblID=-1;
+  resTable->activity_lblID=-1;
+  resTable->app_lbl=NULL;
+  resTable->activity_lbl=NULL;
+  resTable->package=NULL;
+  resTable->versionName=NULL;  
+
+  resTable->mainActivity=0;
+}
+
 
 int main(int argc,char** argv){
 
@@ -571,13 +635,15 @@ int main(int argc,char** argv){
 //  checkFileLen(header);
 //  AndyTable->app_lblID=-1;
 //  AndyTable->activity_lblID=-1;
-  AndyTable->mainActivity=0;//res pool
+//  AndyTable->mainActivity=0;//res pool
+  Init_ResTable(AndyTable);
+
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->headerSize);
   dispChunkInfo(chunk);
   const struct ResStringPool_header* resPool=(struct ResStringPool_header*)chunk;
   setOffsetArray(AndyTable,resPool);
   dispResPool(resPool);
-  setLableIndex(AndyTable,resPool);
+  setNecessaryIndex(AndyTable,resPool);
 
   //resid map pool
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
@@ -585,14 +651,20 @@ int main(int argc,char** argv){
   setMapArray(AndyTable,chunk);
 
   //namespace node
-  chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
-  dispChunkInfo(chunk);
-  //first node
+  uint16_t nextType;
+  do{
+    chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
+    dispChunkInfo(chunk);
+    nextType=((struct ResChunk_header*)((uint8_t*)chunk+chunk->size))->type;
+  }while(nextType == 0x0100);
+  //first node manifest
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);  
   dispChunkInfo(chunk);
   struct ResXMLTree_node* startElem=(struct ResXMLTree_node*)chunk;
+  checkManifestTag(AndyTable,startElem);   
 
   iterElem(startElem,AndyTable);
 
+  printf("12345StrLabel1:%s|StrLabel2:%s|RefLable1:%x|RefLable2:%x|VersionName:%s|Package:%s\n",AndyTable->activity_lbl,AndyTable->app_lbl,AndyTable->activity_lblID,AndyTable->app_lblID,AndyTable->package,AndyTable->versionName);
 //  printf("ID in application is %x,ID in main activity is %x\n",AndyTable->app_lblID,AndyTable->activity_lblID);
 }
