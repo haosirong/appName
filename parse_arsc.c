@@ -150,6 +150,7 @@ struct ResTable_type
 
     // Configuration this collection of entries is designed for.
 //    ResTable_config config;
+    uint32_t config[9];
 };
 
 /**
@@ -325,6 +326,10 @@ struct ResTable{
   int typeIndex;
   int indexName;
   int isutf16;
+  
+  unsigned char* AppName1;
+  unsigned char* AppName2;
+
   const uint8_t* dataEnd;
   uint32_t* valPool_OffsetArray;
   const struct ResStringPool_header* valPool;
@@ -332,6 +337,7 @@ struct ResTable{
 
 
 long file_len;
+uint8_t* headAddr=NULL;
 
 void* getBuffer(char* filename){
   FILE* fp;
@@ -449,6 +455,7 @@ void checkFileLen(const struct ResTable_header* header){
 
 void dispChunkInfo(const struct ResChunk_header* chunk){
   printf("type is %x,headersize is %x,size is %x\n",chunk->type,chunk->headerSize,chunk->size);
+  printf("offset to head is %x\n",(uint8_t*)chunk-headAddr);
 }
 
 /*
@@ -484,7 +491,7 @@ int dispStrInfo16(unsigned char* str,unsigned char* strval){
 
 void setTypeStrID(struct ResTable* resTable,const struct ResStringPool_header* typePool){
   int i,offset;
-  int utf16=1;
+//  int utf16=1;
   int stringCount=typePool->stringCount;
   unsigned char* strval=(unsigned char*)malloc(sizeof(unsigned char)*256);
   unsigned short* strval16=(unsigned short*)malloc(sizeof(unsigned short)*256);
@@ -498,7 +505,7 @@ void setTypeStrID(struct ResTable* resTable,const struct ResStringPool_header* t
     strval[strlen]='\0';
     str+=(strlen+2+1);
     printf("strval is ---> %s\n",strval);*/
-    if(utf16 == 1)
+    if(resTable->isutf16 == 1)
       offset=dispStrInfo16(str,strval);
     else
       offset=dispStrInfo(str,strval);
@@ -510,7 +517,7 @@ void setTypeStrID(struct ResTable* resTable,const struct ResStringPool_header* t
   free(strval);
 }
 
-void setIndexName(struct ResTable* resTable,const struct ResStringPool_header* namePool){
+void setIndexName(struct ResTable* resTable,const struct ResStringPool_header* namePool,char* resName){
   int i,offset;
   int utf16=1;
   int stringCount=namePool->stringCount;
@@ -520,17 +527,17 @@ void setIndexName(struct ResTable* resTable,const struct ResStringPool_header* n
   resTable->indexName=-1;
   for(i=0;i<stringCount;i++){
     printf("No%d",i);
-    if(utf16 == 1)
+    if(resTable->isutf16 == 1)
       offset=dispStrInfo16(str,strval);
     else
       offset=dispStrInfo(str,strval);
     str+=offset;
-    if(strcmp(strval,"app_name") == 0)
+    if(strcmp(strval,resName) == 0)
       resTable->indexName=i;
   }
   free(strval); 
   if(resTable->indexName == -1){
-    fprintf(stderr,"can not find app_name\n");
+    fprintf(stderr,"can not find %s\n",resName);
     exit(-1);
   }
   printf("INDEX OF NAME IS %d\n",resTable->indexName);
@@ -545,7 +552,7 @@ void setOffsetArray(struct ResTable* resTable,const struct ResStringPool_header*
 
   for(i=0;i<stringCount;i++){
 //    printf("val in valPool is %s\n",(unsigned char*)valPool+valPool->stringsStart+resTable->valPool_OffsetArray[i]);
-    
+//    resTable->valPool_OffsetArray[i]+=((uint8_t*)valPool+valPool->stringsStart);
   }
 }
 
@@ -553,15 +560,43 @@ void setOffsetArray(struct ResTable* resTable,const struct ResStringPool_header*
   
 }*/
 
+/*struct ResChunk_header* stepOverPackage(struct ResChunk_header* chunk){
+  //step over package head
+  chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
+  
+}*/
 void main(int argc,char** argv){
   int parseByID=0;
   char* strID=NULL;
   const struct ResTable_header* header=(struct ResTable_header*)getBuffer(argv[1]);
-  if(argc == 4 && strcmp(argv[2],"--parseByID") == 0){
-    parseByID=1;
-    strID=argv[3];
+  char* resName=(char*)malloc(sizeof(char*)*256);
+  char* arscName=argv[1];
+  memset(resName,0,sizeof(char*)*256);
+  printf("argc is %d argv is %s\n",argc,argv[0]);
+  while(argc !=0 ){
+    printf("argc is %d argv is %s\n",argc,argv[0]);
+    if(strcmp(argv[0],"--parseByID") == 0){
+      argc--;
+      argv++;
+      parseByID=1;
+      strID=argv[0];
+    }
+    if(strcmp(argv[0],"--res_name") == 0){
+      argc--;
+      argv++;
+      strcpy(resName,argv[0]);
+    }
+    argc--;
+    argv++;
   }
+  printf("res_name is %s,len is %d\n",resName,strlen(resName));
+//  if(argc == 4 && strcmp(argv[2],"--parseByID") == 0){
+//    parseByID=1;
+//    strID=argv[3];
+//  }
   const struct ResChunk_header* chunk=(struct ResChunk_header*)header;
+  headAddr=(uint8_t*)header;
+ 
   struct ResTable* AndyTable=(struct ResTable*)malloc(sizeof(struct ResTable));
 
   checkFileLen(header); 
@@ -573,27 +608,41 @@ void main(int argc,char** argv){
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->headerSize);
   dispChunkInfo(chunk);
   const struct ResStringPool_header* valPool=(struct ResStringPool_header*)chunk;
+  AndyTable->AppName1=NULL;
+  AndyTable->AppName2=NULL;
+
   AndyTable->isutf16=0;
   if(valPool->flags == 0x00000000 || valPool->flags == 0x00000001 )
     AndyTable->isutf16=1;
   setOffsetArray(AndyTable,valPool);
   AndyTable->valPool=valPool;
   //package head
-  chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
-  dispChunkInfo(chunk);
+
+  //dispose framework-res.apk
+  if(strcmp(arscName,"resources_framework-res.arsc") == 0)
+    chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
+  else{
+    unsigned int package_id;
+    do{
+        chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
+        dispChunkInfo(chunk);
+        package_id=((struct ResTable_package*)chunk)->id;
+    }while(package_id != 0x0000007f);
+  }  
   //string type pool
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->headerSize);
   dispChunkInfo(chunk);
   
   const struct ResStringPool_header* typePool=(struct ResStringPool_header*)chunk;
-  setTypeStrID(AndyTable,typePool);
+//  if(parseByID == 0)
+    setTypeStrID(AndyTable,typePool);
 
   //string name pool
   chunk=(struct ResChunk_header*)((uint8_t*)chunk+chunk->size);
   dispChunkInfo(chunk);
   const struct ResStringPool_header* namePool=(struct ResStringPool_header*)chunk; 
   if(parseByID == 0)
-    setIndexName(AndyTable,namePool);
+    setIndexName(AndyTable,namePool,resName);
 //  printf("%x     %x",(uint8_t*)chunk+chunk->size,AndyTable->dataEnd);
 
   while((uint8_t*)chunk+chunk->size != AndyTable->dataEnd){
@@ -622,14 +671,53 @@ void main(int argc,char** argv){
              memcpy(resSeq,strID+4,4);
              resSeq[4]='\0';
              j=str2Hex(resSeq);
-             if(resEntry_OffsetArray[j]!=0xFFFFFFFF){
+             if(resEntry_OffsetArray[j]!=0xFFFFFFFF){//ensure entry exist
                struct ResTable_entry* resEntry=(struct ResTable_entry*)((uint8_t*)infoChunk+infoChunk->entriesStart+resEntry_OffsetArray[j]);
-               if(resEntry->flags==0x0000){
+               if(resEntry->flags==0x0000 || resEntry->flags==0x0002){
                  struct Res_value* resVal=(struct Res_value*)((uint8_t*)resEntry+resEntry->size);
+                 if(resVal->dataType == 0x01){ //the string is a reference,turn to real res_entry
+                   unsigned int data=resVal->data;
+                   unsigned int k=data & 0x0000ffff;
+                 //  uint16_t valIndex=data32 & 0x0000ffff; 
+                   resEntry=(struct ResTable_entry*)((uint8_t*)infoChunk+infoChunk->entriesStart+resEntry_OffsetArray[k]);
+                   resVal=(struct Res_value*)((uint8_t*)resEntry+resEntry->size);
+                 }
                  nameIndex=resEntry->index;
                  valIndex=resVal->data;
                  printf("----> strIndex is %x,nameIndex is %x,valIndex is %x \n",j,nameIndex,valIndex);
-                 printf("HAHA !!! APP NAME IS %s\n",(uint8_t*)valPool+valPool->stringsStart+AndyTable->valPool_OffsetArray[valIndex]);
+                 if(AndyTable->isutf16 == 1){
+                    uint8_t* appNameOffset=(uint8_t*)valPool+valPool->stringsStart+AndyTable->valPool_OffsetArray[valIndex];
+                    int nameLen=appNameOffset[0];
+                    printf("foo ------> app_len is %d\n",nameLen);
+                    unsigned short* app_name16=(unsigned short*)(appNameOffset+2);
+                    unsigned char* app_name=(unsigned char*)malloc(sizeof(unsigned char)*256);
+                    UTF16ToUTF8(app_name16,app_name16+nameLen,app_name,app_name+256);
+                    printf("HAHA !!! APP NAME IS %s\n",app_name);
+                    if(infoChunk->config[2]==0x4e43687a){
+                      AndyTable->AppName1=(unsigned char*)malloc(sizeof(unsigned char)*256);
+                      memcpy(AndyTable->AppName1,app_name,256);
+                    }
+                    if(infoChunk->config[2]==0x00000000){
+                      AndyTable->AppName2=(unsigned char*)malloc(sizeof(unsigned char)*256);
+                      memcpy(AndyTable->AppName2,app_name,256);
+                    }
+                 }
+                 else{
+//                   printf("HAHA !!! APP NAME IS %s\n",(uint8_t*)valPool+valPool->stringsStart+AndyTable->valPool_OffsetArray[valIndex]+2);
+                   uint8_t* appNameOffset=(uint8_t*)valPool+valPool->stringsStart+AndyTable->valPool_OffsetArray[valIndex];
+                   int nameLen=appNameOffset[1];  
+                   if(infoChunk->config[2]==0x4e43687a){
+                     AndyTable->AppName1=(unsigned char*)malloc(sizeof(unsigned char)*256);
+                     memcpy(AndyTable->AppName1,appNameOffset+2,256);
+                     AndyTable->AppName1[nameLen]='\0';
+                   }
+                   if(infoChunk->config[2]==0x00000000){
+                     AndyTable->AppName2=(unsigned char*)malloc(sizeof(unsigned char)*256);
+                     memcpy(AndyTable->AppName2,appNameOffset+2,256);
+                     AndyTable->AppName2[nameLen]='\0';
+                   }
+                   printf("HAHA !!! APP NAME IS %s\n",appNameOffset+2);
+                 }
                }
              } 
            }
@@ -637,7 +725,7 @@ void main(int argc,char** argv){
              for(j=0;j<strCount;j++){
                if(resEntry_OffsetArray[j]!=0xFFFFFFFF){
                  struct ResTable_entry* resEntry=(struct ResTable_entry*)((uint8_t*)infoChunk+infoChunk->entriesStart+resEntry_OffsetArray[j]);
-                 if(resEntry->flags==0x0000){
+                 if(resEntry->flags==0x0000 || resEntry->flags==0x0002){
                    struct Res_value* resVal=(struct Res_value*)((uint8_t*)resEntry+resEntry->size);
                    nameIndex=resEntry->index;
                    valIndex=resVal->data;
@@ -665,4 +753,5 @@ void main(int argc,char** argv){
      }
      
   }
+  printf("12345AppName1:%s|AppName2:%s\n",AndyTable->AppName1,AndyTable->AppName2);
 }
